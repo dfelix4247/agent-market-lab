@@ -17,3 +17,31 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
+      - name: Verify production x402 challenge
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://agent-market-lab-git-main-wigglesthe3rds-projects.vercel.app/api/resolve?url=https%3A%2F%2Fexample.com"
+
+          for attempt in $(seq 1 36); do
+            rm -f /tmp/headers.txt /tmp/body.txt
+            code=$(curl -sS --max-time 15 -D /tmp/headers.txt -o /tmp/body.txt -w "%{http_code}" "$URL" || true)
+
+            if [ "$code" = "402" ]; then
+              payment_required=$(awk 'BEGIN{IGNORECASE=1} /^payment-required:/ {sub(/^[^:]+:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' /tmp/headers.txt)
+              if [ -n "$payment_required" ]; then
+                export PAYMENT_REQUIRED="$payment_required"
+                node -e 'const c=JSON.parse(Buffer.from(process.env.PAYMENT_REQUIRED,"base64").toString("utf8")); const t=c.accepts?.[0]; if(c.x402Version!==2 || t?.network!=="eip155:8453" || t?.payTo?.toLowerCase()!=="0x68cdcd3eded821c90b54939d2ea99a946e1c4ac5" || t?.amount!=="2000"){console.error(c); process.exit(1)} console.log("Verified production x402 challenge", t)'
+                exit 0
+              fi
+            fi
+
+            echo "Attempt $attempt: expected 402 + PAYMENT-REQUIRED, got HTTP $code"
+            sleep 5
+          done
+
+          echo "Production x402 smoke test failed"
+          cat /tmp/headers.txt || true
+          cat /tmp/body.txt || true
+          exit 1
