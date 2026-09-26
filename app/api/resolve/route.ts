@@ -1,51 +1,76 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withX402 } from "@x402/next";
+import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { resolveAgentSurface } from "@/lib/resolver";
+import { NETWORK, PAY_TO, PRICE, x402Server } from "@/lib/x402";
 
 export const runtime = "nodejs";
 
-const PAY_TO = "0x68cDcD3EdED821c90B54939d2eA99a946E1C4AC5";
-const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-
-function paymentRequired(request: NextRequest) {
-  const challenge = {
-    x402Version: 2,
-    error: "Payment required",
-    resource: {
-      url: request.url,
-      description: "Agent Surface Resolver: inspect a public URL for agent-readable interfaces, OpenAPI, llms.txt, A2A/MCP hints and x402 surfaces.",
-      mimeType: "application/json"
-    },
-    accepts: [{
-      scheme: "exact",
-      network: "eip155:8453",
-      amount: "2000",
-      asset: USDC_BASE,
-      payTo: PAY_TO,
-      maxTimeoutSeconds: 300,
-      extra: { name: "USD Coin", version: "2" }
-    }]
-  };
-  const encoded = Buffer.from(JSON.stringify(challenge)).toString("base64");
-  return NextResponse.json(challenge, {
-    status: 402,
-    headers: {
-      "PAYMENT-REQUIRED": encoded,
-      "Access-Control-Expose-Headers": "PAYMENT-REQUIRED",
-      "Cache-Control": "no-store"
-    }
-  });
-}
-
-export async function GET(request: NextRequest) {
-  // Stage-1 protocol endpoint. Settlement verification is added after public deployment is healthy.
-  if (!request.headers.get("payment-signature")) return paymentRequired(request);
-
+const handler = async (request: NextRequest) => {
   const url = request.nextUrl.searchParams.get("url");
-  if (!url) return NextResponse.json({ error: "Missing required query parameter: url" }, { status: 400 });
+  if (!url) {
+    return NextResponse.json(
+      { error: "Missing required query parameter: url" },
+      { status: 400 },
+    );
+  }
+
   try {
     const result = await resolveAgentSurface(url);
     return NextResponse.json(result);
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to resolve target" }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to resolve target" },
+      { status: 400 },
+    );
   }
-}
+};
+
+export const GET = withX402(
+  handler,
+  {
+    "/api/resolve": {
+      accepts: {
+        scheme: "exact",
+        price: PRICE,
+        network: NETWORK,
+        payTo: PAY_TO,
+        maxTimeoutSeconds: 300,
+      },
+      description:
+        "Inspect a public URL for agent-readable interfaces including OpenAPI, llms.txt, A2A/MCP hints, robots metadata, and x402 payment surfaces.",
+      mimeType: "application/json",
+      extensions: {
+        ...declareDiscoveryExtension({
+          input: { url: "https://example.com" },
+          inputSchema: {
+            properties: {
+              url: {
+                type: "string",
+                format: "uri",
+                description: "Public HTTP or HTTPS URL to inspect",
+              },
+            },
+            required: ["url"],
+          },
+          output: {
+            example: {
+              target: "https://example.com/",
+              machineReadinessScore: 30,
+              x402Detected: false,
+              discovered: [
+                {
+                  path: "/robots.txt",
+                  status: 200,
+                  contentType: "text/plain",
+                  paymentRequired: false,
+                },
+              ],
+            },
+          },
+        }),
+      },
+    },
+  },
+  x402Server,
+);
