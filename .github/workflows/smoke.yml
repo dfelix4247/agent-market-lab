@@ -1,0 +1,56 @@
+name: Production Smoke Test
+
+on:
+  workflow_run:
+    workflows: ["Build"]
+    types: [completed]
+
+jobs:
+  smoke:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify production x402 challenge
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://agent-market-lab-git-main-wigglesthe3rds-projects.vercel.app/api/resolve?url=https%3A%2F%2Fexample.com"
+
+          for attempt in $(seq 1 36); do
+            rm -f headers.txt body.txt
+            code=$(curl -sS -D headers.txt -o body.txt -w "%{http_code}" "$URL" || true)
+
+            if [ "$code" = "402" ]; then
+              payment_required=$(awk 'BEGIN{IGNORECASE=1} /^payment-required:/ {sub(/^[^:]+:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' headers.txt)
+              if [ -n "$payment_required" ]; then
+                export PAYMENT_REQUIRED="$payment_required"
+                python - <<'PY'
+import base64
+import json
+import os
+
+raw = os.environ["PAYMENT_REQUIRED"].strip()
+raw += "=" * (-len(raw) % 4)
+challenge = json.loads(base64.b64decode(raw))
+
+assert challenge.get("x402Version") == 2, challenge
+accepts = challenge.get("accepts") or []
+assert accepts, challenge
+terms = accepts[0]
+assert terms.get("network") == "eip155:8453", terms
+assert terms.get("payTo", "").lower() == "0x68cdcd3eded821c90b54939d2ea99a946e1c4ac5", terms
+assert terms.get("amount") == "2000", terms
+print("Verified production x402 v2 challenge", json.dumps(terms, sort_keys=True))
+PY
+                exit 0
+              fi
+            fi
+
+            echo "Attempt $attempt: expected 402 + PAYMENT-REQUIRED, got HTTP $code"
+            sleep 5
+          done
+
+          echo "Production x402 smoke test failed"
+          cat headers.txt || true
+          cat body.txt || true
+          exit 1
