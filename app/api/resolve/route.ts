@@ -6,7 +6,7 @@ import { NETWORK, PAY_TO, PRICE, x402Server } from "@/lib/x402";
 
 export const runtime = "nodejs";
 
-const handler = async (request: NextRequest) => {
+const handler = async (request: NextRequest): Promise<NextResponse> => {
   const url = request.nextUrl.searchParams.get("url");
   if (!url) {
     return NextResponse.json(
