@@ -40,6 +40,8 @@ export const GET = withX402(
       description:
         "Inspect a public URL for agent-readable interfaces including OpenAPI, llms.txt, A2A/MCP hints, robots metadata, and x402 payment surfaces.",
       mimeType: "application/json",
+      serviceName: "Agent Surface Resolver",
+      tags: ["agent-discovery", "url-inspection", "x402", "openapi", "mcp"],
       extensions: {
         ...declareDiscoveryExtension({
           input: { url: "https://example.com" },
