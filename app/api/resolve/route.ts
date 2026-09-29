@@ -26,7 +26,7 @@ const handler = async (request: NextRequest): Promise<NextResponse> => {
   }
 };
 
-export const GET = withX402(
+const protectedGET = withX402(
   handler,
   {
     "/api/resolve": {
@@ -76,3 +76,31 @@ export const GET = withX402(
   },
   x402Server,
 );
+
+export const GET = async (request: NextRequest): Promise<Response> => {
+  const response = await protectedGET(request);
+  if (response.status !== 402) {
+    return response;
+  }
+
+  const encodedRequirements = response.headers.get("payment-required");
+  if (!encodedRequirements) {
+    return response;
+  }
+
+  try {
+    const requirements = JSON.parse(
+      Buffer.from(encodedRequirements, "base64").toString("utf8"),
+    );
+    const headers = new Headers(response.headers);
+    headers.set("cache-control", "no-store");
+    headers.set("content-type", "application/json");
+
+    return new Response(JSON.stringify(requirements), {
+      status: 402,
+      headers,
+    });
+  } catch {
+    return response;
+  }
+};
